@@ -575,11 +575,11 @@ def paste_zone(cat: str):
 # 오른쪽 패널
 # ══════════════════════
 with right:
-    st.markdown('<div class="section-hd">🖼 사진 추가</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-hd">🖼 사진 추가 및 확인</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="tip">'
-        '📋 <b>Ctrl+V</b> 붙여넣기 또는 파일 선택 모두 가능합니다. '
-        '↑↓ 버튼으로 순서를 조정하세요.'
+        '📋 탭에서 카테고리 선택 → <b>Ctrl+V</b> 붙여넣기 또는 파일 선택. '
+        '사진 위의 🗑 버튼으로 삭제할 수 있습니다.'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -598,7 +598,7 @@ with right:
                 st.session_state.photos[cat].append((fname, img_bytes))
                 st.rerun()
 
-            # ── 파일 업로더 (기존)
+            # ── 파일 업로더
             uploaded = st.file_uploader(
                 "또는 파일 선택",
                 type=["jpg", "jpeg", "png", "bmp", "webp"],
@@ -610,31 +610,41 @@ with right:
                 add_photos(cat, uploaded)
                 st.rerun()
 
-            # ── 사진 미리보기
+            st.divider()
+
+            # ── 사진 미리보기 (업로드 영역 바로 아래, 항상 표시)
             photos = st.session_state.photos[cat]
             if not photos:
-                st.info("아직 사진이 없습니다.")
+                st.markdown(
+                    '<div style="text-align:center; color:#aaa; padding:1.5rem 0; '
+                    'border:1px dashed #ddd; border-radius:8px; font-size:0.9rem;">'
+                    '아직 사진이 없습니다</div>',
+                    unsafe_allow_html=True,
+                )
             else:
-                st.write(f"총 **{len(photos)}장**")
+                st.write(f"**{cat}** — 총 {len(photos)}장")
+
                 PCOLS = 3
                 for ri in range(math.ceil(len(photos) / PCOLS)):
                     cols = st.columns(PCOLS)
                     for ci in range(PCOLS):
                         pidx = ri * PCOLS + ci
                         if pidx < len(photos):
-                            fname, data = photos[pidx]
+                            _, data = photos[pidx]
                             with cols[ci]:
                                 try:
                                     st.image(data, use_container_width=True)
                                 except Exception:
-                                    st.write("⚠ 미리보기 불가")
-                                b1, b2, b3 = st.columns(3)
-                                with b1:
-                                    if st.button("↑", key=f"u_{cat}_{pidx}"):
-                                        move_photo(cat, pidx, -1); st.rerun()
-                                with b2:
-                                    if st.button("↓", key=f"d_{cat}_{pidx}"):
-                                        move_photo(cat, pidx,  1); st.rerun()
-                                with b3:
-                                    if st.button("🗑", key=f"x_{cat}_{pidx}"):
-                                        remove_photo(cat, pidx); st.rerun()
+                                    st.markdown(
+                                        '<div style="background:#fee2e2;border-radius:6px;'
+                                        'padding:2rem;text-align:center;color:#991b1b;">⚠ 미리보기 불가</div>',
+                                        unsafe_allow_html=True,
+                                    )
+                                # 삭제 버튼만 (순서 버튼 제거)
+                                if st.button(
+                                    "🗑 삭제",
+                                    key=f"x_{cat}_{pidx}",
+                                    use_container_width=True,
+                                ):
+                                    remove_photo(cat, pidx)
+                                    st.rerun()
