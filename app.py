@@ -461,26 +461,37 @@ with left:
 def paste_zone(cat: str):
     """
     streamlit-paste-button 사용.
-    버튼 클릭 후 Ctrl+V → PIL Image 반환.
-    라이브러리 없으면 안내 문구만 표시.
+    같은 이미지가 반복 추가되는 것을 해시로 방지.
     """
     if not PASTE_AVAILABLE:
         st.warning("붙여넣기 기능을 사용하려면 `streamlit-paste-button`을 설치하세요.")
         return None
 
+    paste_key  = f"paste_{cat.replace('/', '_').replace(' ', '_')}"
+    last_key   = f"last_paste_hash_{paste_key}"   # 직전 이미지 해시 저장용
+
     result = paste_image_button(
         label="📋 클릭 후 Ctrl+V로 붙여넣기",
-        key=f"paste_{cat.replace('/', '_').replace(' ', '_')}",
+        key=paste_key,
         background_color="#EFF6FF",
         hover_background_color="#DBEAFE",
         errors="ignore",
     )
 
     if result and result.image_data is not None:
-        # PIL Image → bytes
         buf = io.BytesIO()
         result.image_data.save(buf, format="PNG")
-        return buf.getvalue()
+        img_bytes = buf.getvalue()
+
+        # 직전에 추가한 이미지와 동일하면 무시 (중복 방지)
+        import hashlib
+        img_hash = hashlib.md5(img_bytes).hexdigest()
+        if st.session_state.get(last_key) == img_hash:
+            return None
+
+        st.session_state[last_key] = img_hash
+        return img_bytes
+
     return None
 
 
@@ -509,7 +520,7 @@ with right:
                 safe_cat = cat.replace("/", "_").replace(" ", "_")
                 fname = f"paste_{safe_cat}_{int(time.time())}.png"
                 st.session_state.photos[cat].append((fname, img_bytes))
-                st.rerun()
+                # rerun 없이 그대로 진행 — 아래 미리보기가 즉시 갱신됨
 
             # ── 파일 업로더
             uploaded = st.file_uploader(
