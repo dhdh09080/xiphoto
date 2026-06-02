@@ -11,6 +11,12 @@ from datetime import datetime
 import streamlit as st
 from PIL import Image
 import streamlit.components.v1 as components
+
+try:
+    from streamlit_paste_button import paste_image_button
+    PASTE_AVAILABLE = True
+except ImportError:
+    PASTE_AVAILABLE = False
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -454,120 +460,27 @@ with left:
 # ────────────────────────────────────────
 def paste_zone(cat: str):
     """
-    Ctrl+V 붙여넣기 영역.
-    이미지를 base64로 읽어 숨겨진 st.text_area에 기록 → Streamlit이 감지해서 세션에 추가.
+    streamlit-paste-button 사용.
+    버튼 클릭 후 Ctrl+V → PIL Image 반환.
+    라이브러리 없으면 안내 문구만 표시.
     """
-    safe_cat = cat.replace("/", "_").replace(" ", "_")
-    area_key = f"paste_data_{safe_cat}"
+    if not PASTE_AVAILABLE:
+        st.warning("붙여넣기 기능을 사용하려면 `streamlit-paste-button`을 설치하세요.")
+        return None
 
-    # 숨겨진 텍스트에어리어 (base64 데이터 수신용)
-    pasted_b64 = st.text_area(
-        label=area_key,
-        key=area_key,
-        label_visibility="collapsed",
-        height=1,
-        placeholder="",
+    result = paste_image_button(
+        label="📋 클릭 후 Ctrl+V로 붙여넣기",
+        key=f"paste_{cat.replace('/', '_').replace(' ', '_')}",
+        background_color="#EFF6FF",
+        hover_background_color="#DBEAFE",
+        errors="ignore",
     )
 
-    # 붙여넣기 UI (iframe)
-    uid = safe_cat
-    html = f"""
-<style>
-  #pzone-{uid} {{
-    border: 2px dashed #93C5FD;
-    border-radius: 10px;
-    padding: 18px;
-    text-align: center;
-    font-family: sans-serif;
-    font-size: 14px;
-    color: #3B82F6;
-    background: #EFF6FF;
-    cursor: pointer;
-    outline: none;
-    min-height: 60px;
-    display: flex; align-items: center; justify-content: center;
-    transition: background 0.15s;
-    user-select: none;
-  }}
-  #pzone-{uid}.active {{ background:#DBEAFE; border-color:#3B82F6; }}
-  #pzone-{uid}.ok     {{ background:#ECFDF5; border-color:#10B981; color:#065F46; }}
-</style>
-<div id="pzone-{uid}" tabindex="0">
-  📋 여기를 클릭 후 <b>Ctrl+V</b> 로 사진 붙여넣기
-</div>
-<script>
-(function() {{
-  const zone = document.getElementById('pzone-{uid}');
-
-  zone.addEventListener('click', () => zone.focus());
-  zone.addEventListener('focus', () => zone.classList.add('active'));
-  zone.addEventListener('blur',  () => zone.classList.remove('active'));
-
-  function handlePaste(e) {{
-    const items = (e.clipboardData || e.originalEvent.clipboardData).items;
-    for (let i = 0; i < items.length; i++) {{
-      if (items[i].type.startsWith('image/')) {{
-        e.preventDefault();
-        const blob = items[i].getAsFile();
-        const reader = new FileReader();
-        reader.onload = function(ev) {{
-          const b64 = ev.target.result;   // data:image/png;base64,...
-
-          // 부모 Streamlit 페이지의 textarea에 값 주입 후 change 이벤트 발생
-          const parent = window.parent.document;
-          const textareas = parent.querySelectorAll('textarea');
-          let target = null;
-          textareas.forEach(ta => {{
-            if (ta.getAttribute('aria-label') === '{area_key}' ||
-                ta.closest('[data-testid]')?.querySelector('label')?.textContent?.trim() === '{area_key}') {{
-              target = ta;
-            }}
-          }});
-          // fallback: placeholder로 찾기
-          if (!target) {{
-            textareas.forEach(ta => {{ if (ta.placeholder === '') target = ta; }});
-          }}
-          if (target) {{
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-              window.parent.HTMLTextAreaElement.prototype, 'value').set;
-            nativeInputValueSetter.call(target, b64);
-            target.dispatchEvent(new Event('input', {{ bubbles: true }}));
-            target.dispatchEvent(new Event('change', {{ bubbles: true }}));
-          }}
-
-          zone.innerHTML = '✅ 추가됐습니다! 계속 붙여넣거나 왼쪽에서 Word 생성하세요.';
-          zone.classList.add('ok');
-          setTimeout(() => {{
-            zone.innerHTML = '📋 여기를 클릭 후 <b>Ctrl+V</b> 로 사진 붙여넣기';
-            zone.classList.remove('ok');
-          }}, 2500);
-        }};
-        reader.readAsDataURL(blob);
-        break;
-      }}
-    }}
-  }}
-
-  zone.addEventListener('paste', handlePaste);
-  // 탭 내 어디서나 붙여넣기 가능하도록 부모 문서에도 등록
-  try {{
-    window.parent.document.addEventListener('paste', handlePaste);
-  }} catch(e) {{}}
-}})();
-</script>
-"""
-    components.html(html, height=90, scrolling=False)
-
-    # text_area에 base64가 들어왔으면 bytes로 변환해서 반환
-    if pasted_b64 and pasted_b64.startswith("data:image"):
-        try:
-            _, b64 = pasted_b64.split(",", 1)
-            img_bytes = base64.b64decode(b64)
-            # 읽은 뒤 초기화 (다음 리런에서 중복 방지)
-            st.session_state[area_key] = ""
-            return img_bytes
-        except Exception:
-            pass
+    if result and result.image_data is not None:
+        # PIL Image → bytes
+        buf = io.BytesIO()
+        result.image_data.save(buf, format="PNG")
+        return buf.getvalue()
     return None
 
 
