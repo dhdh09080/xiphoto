@@ -5,11 +5,12 @@
 - 레이아웃: 카테고리 제목 + 표 keep_with_next (줄바꿈 방지)
 """
 
-import io, json, math, base64
+import io, json, math, base64, time
 from datetime import datetime
 
 import streamlit as st
 from PIL import Image
+import streamlit.components.v1 as components
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -448,14 +449,134 @@ with left:
         st.rerun()
 
 
+# ────────────────────────────────────────
+# 클립보드 붙여넣기 컴포넌트
+# ────────────────────────────────────────
+def paste_zone(cat: str) -> str | None:
+    """
+    Ctrl+V 붙여넣기 영역. 이미지가 붙여넣어지면 base64 data-URL 문자열을 반환.
+    st.components iframe → query_params 방식으로 Streamlit에 전달.
+    """
+    safe_cat = cat.replace("/", "_").replace(" ", "_")
+    param_key = f"paste_{safe_cat}"
+
+    html = f"""
+<style>
+  #pzone-{safe_cat} {{
+    border: 2px dashed #93C5FD;
+    border-radius: 10px;
+    padding: 18px 12px;
+    text-align: center;
+    font-family: sans-serif;
+    font-size: 14px;
+    color: #3B82F6;
+    background: #EFF6FF;
+    cursor: pointer;
+    transition: background 0.15s;
+    outline: none;
+    min-height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }}
+  #pzone-{safe_cat}:hover, #pzone-{safe_cat}.active {{
+    background: #DBEAFE;
+    border-color: #3B82F6;
+  }}
+  #pzone-{safe_cat}.ok {{
+    background: #ECFDF5;
+    border-color: #10B981;
+    color: #065F46;
+  }}
+</style>
+<div id="pzone-{safe_cat}" tabindex="0">
+  📋 여기를 클릭 후 <strong>Ctrl+V</strong> 로 사진 붙여넣기
+</div>
+<script>
+(function() {{
+  const zone = document.getElementById('pzone-{safe_cat}');
+  const KEY   = '{param_key}';
+
+  zone.addEventListener('focus', () => zone.classList.add('active'));
+  zone.addEventListener('blur',  () => zone.classList.remove('active'));
+  zone.addEventListener('click', () => zone.focus());
+
+  async function sendImage(blob) {{
+    const reader = new FileReader();
+    reader.onload = function(e) {{
+      const b64 = e.target.result;           // data:image/png;base64,...
+      const url = new URL(window.parent.location.href);
+      url.searchParams.set(KEY, b64);
+      url.searchParams.set(KEY + '_ts', Date.now());
+      window.parent.history.replaceState(null, '', url);
+      // Streamlit 리런 트리거
+      window.parent.dispatchEvent(new Event('popstate'));
+      zone.textContent = '✅ 붙여넣기 완료! 위 저장 버튼을 누르세요.';
+      zone.classList.add('ok');
+      setTimeout(() => {{
+        zone.innerHTML = '📋 여기를 클릭 후 <strong>Ctrl+V</strong> 로 사진 붙여넣기';
+        zone.classList.remove('ok');
+      }}, 2500);
+    }};
+    reader.readAsDataURL(blob);
+  }}
+
+  document.addEventListener('paste', function(e) {{
+    if (document.activeElement !== zone && !zone.contains(document.activeElement)) return;
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {{
+      if (items[i].type.startsWith('image/')) {{
+        sendImage(items[i].getAsFile());
+        e.preventDefault();
+        break;
+      }}
+    }}
+  }});
+
+  // 전역 paste도 잡기 (탭 안에 포커스가 없어도 동작)
+  window.parent.document.addEventListener('paste', function(e) {{
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {{
+      if (items[i].type.startsWith('image/')) {{
+        sendImage(items[i].getAsFile());
+        e.preventDefault();
+        break;
+      }}
+    }}
+  }}, {{ once: false, capture: true }});
+}})();
+</script>
+"""
+    components.html(html, height=80, scrolling=False)
+
+    # query_params에서 붙여넣기 결과 읽기
+    params = st.query_params
+    val = params.get(param_key, None)
+    if val and val.startswith("data:image"):
+        # 한 번 읽은 뒤 파라미터 제거 (중복 방지)
+        st.query_params.pop(param_key, None)
+        st.query_params.pop(param_key + "_ts", None)
+        return val
+    return None
+
+
+def dataurl_to_bytes(data_url: str) -> bytes:
+    """data:image/...;base64,XXX → bytes"""
+    header, b64 = data_url.split(",", 1)
+    return base64.b64decode(b64)
+
+
 # ══════════════════════
 # 오른쪽 패널
 # ══════════════════════
 with right:
-    st.markdown('<div class="section-hd">🖼 사진 업로드</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-hd">🖼 사진 추가</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="tip">💡 탭에서 카테고리를 선택 후 사진을 드래그하거나 선택하세요. '
-        '↑↓ 버튼으로 순서를 조정할 수 있습니다.</div>',
+        '<div class="tip">'
+        '📋 <b>Ctrl+V</b> 붙여넣기 또는 파일 선택 모두 가능합니다. '
+        '↑↓ 버튼으로 순서를 조정하세요.'
+        '</div>',
         unsafe_allow_html=True,
     )
 
@@ -464,17 +585,29 @@ with right:
 
     for tab, cat in zip(tabs, FIXED_CATEGORIES):
         with tab:
+
+            # ── Ctrl+V 붙여넣기 영역
+            pasted = paste_zone(cat)
+            if pasted:
+                safe_cat = cat.replace("/", "_").replace(" ", "_")
+                fname = f"paste_{safe_cat}_{int(time.time())}.png"
+                img_bytes = dataurl_to_bytes(pasted)
+                st.session_state.photos[cat].append((fname, img_bytes))
+                st.rerun()
+
+            # ── 파일 업로더 (기존)
             uploaded = st.file_uploader(
-                f"{cat} 사진",
+                "또는 파일 선택",
                 type=["jpg", "jpeg", "png", "bmp", "webp"],
                 accept_multiple_files=True,
                 key=f"up_{cat}",
-                label_visibility="collapsed",
+                label_visibility="visible",
             )
             if uploaded:
                 add_photos(cat, uploaded)
                 st.rerun()
 
+            # ── 사진 미리보기
             photos = st.session_state.photos[cat]
             if not photos:
                 st.info("아직 사진이 없습니다.")
